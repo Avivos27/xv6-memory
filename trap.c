@@ -36,6 +36,8 @@ idtinit(void)
 void
 trap(struct trapframe *tf)
 {
+  uint addr;
+  pde_t *va;
   if(tf->trapno == T_SYSCALL){
     if(proc->killed)
       exit();
@@ -76,6 +78,17 @@ trap(struct trapframe *tf)
     cprintf("cpu%d: spurious interrupt at %x:%x\n",
             cpu->id, tf->cs, tf->eip);
     lapiceoi();
+    break;
+
+  case T_PGFLT:
+
+    addr = rcr2();
+    va = &proc->pgdir[PDX(addr)];
+    if (((int)(*va) & PTE_P) != 0){  // if page table isn't present at page directory -> hard page fault
+      if (((uint*)PTE_ADDR(P2V(*va)))[PTX(addr)] & PTE_PG) { // if the page is in the process's swap file
+        swapPages(PTE_ADDR(addr)); 
+      }
+    }   
     break;
    
   //PAGEBREAK: 13

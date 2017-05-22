@@ -1,5 +1,7 @@
 // Segments in proc->gdt.
 #define NSEGS     7
+#define MAX_PSYC_PAGES 15
+#define MAX_TOTAL_PAGES 30
 
 // Per-CPU state
 struct cpu {
@@ -51,6 +53,20 @@ struct context {
 
 enum procstate { UNUSED, EMBRYO, SLEEPING, RUNNABLE, RUNNING, ZOMBIE };
 
+
+struct pgdesc{
+  int inUse;
+  char* va;
+};
+
+struct lifoHead {
+  uint page;
+  struct lifoHead *next;
+};
+
+struct {
+  struct lifoHead *lifoHead;
+} lifo;
 // Per-process state
 struct proc {
   uint sz;                     // Size of process memory (bytes)
@@ -70,6 +86,11 @@ struct proc {
   //Swap file. must initiate with create swap file
   struct file *swapFile;			//page file
 
+  // paging fields
+  int numPhysPages;
+  int numStoredPages;
+  struct pgdesc storedPages[MAX_PSYC_PAGES];
+  struct lifo lifoHead;
 };
 
 // Process memory is laid out contiguously, low addresses first:

@@ -5,11 +5,18 @@
 #include "memlayout.h"
 #include "mmu.h"
 #include "proc.h"
-#include "elf.h"
+#include "elf.h" 
 
 extern char data[];  // defined by kernel.ld
 pde_t *kpgdir;  // for use in scheduler()
 struct segdesc gdt[NSEGS];
+
+void addToLifo(uint va){
+  struct lifoHead *r;
+  r = proc->lifo.head;
+  if(r)
+    proc->lifo.head = r->next;
+}
 
 // Set up CPU's kernel segment descriptors.
 // Run once on entry on each CPU.
@@ -38,6 +45,10 @@ seginit(void)
   cpu = c;
   proc = 0;
 }
+
+static pte_t* choosePTESwap(){
+  return (pte_t*)0;
+} 
 
 // Return the address of the PTE in page table pgdir
 // that corresponds to virtual address va.  If alloc!=0,
@@ -230,6 +241,8 @@ allocuvm(pde_t *pgdir, uint oldsz, uint newsz)
 
   a = PGROUNDUP(oldsz);
   for(; a < newsz; a += PGSIZE){
+
+
     mem = kalloc();
     if(mem == 0){
       cprintf("allocuvm out of memory\n");
@@ -238,6 +251,44 @@ allocuvm(pde_t *pgdir, uint oldsz, uint newsz)
     }
     memset(mem, 0, PGSIZE);
     mappages(pgdir, (char*)a, PGSIZE, v2p(mem), PTE_W|PTE_U);
+
+    // our poor implementation (mostly omer`s work)
+    if(proc->numPhysPages < MAX_PSYC_PAGES){
+      proc->numPhysPages++;
+      addToLifo(va);
+
+
+      cprintf("%d. filled page %d\n",proc->pid,proc->numPhysPages);
+    }
+    else{
+      if(proc->swapFile == 0) // if swapFile not init
+         createSwapFile(proc);
+
+      
+      int i;
+      for(i=0;i<MAX_PSYC_PAGES;i++){
+        if(!proc->storedPages[i].inUse)
+          break;
+      }
+
+      if(i==MAX_PSYC_PAGES)
+        panic("MAX_PSYC_PAGES exceeded");
+
+      proc->storedPages[i].inUse = 1;
+      proc->storedPages[i].va = (char*)PTE_ADDR(a);
+
+      // write to swapfile new page???
+      // char buf[PGSIZE];
+      // writeToSwapFile(proc, buf, i*PGSIZE, PGSIZE);
+
+      pte_t* pte = walkpgdir(pgdir, (void*)a, 0);
+      *pte |= PTE_PG; //turn on second storage flag
+      *pte &= ~PTE_P; //turn off present flag
+      kfree(mem);
+      proc->numStoredPages++;
+      cprintf("%d. stored page %d\n",proc->pid,proc->numStoredPages);
+    }
+
   }
   return newsz;
 }
@@ -260,12 +311,29 @@ deallocuvm(pde_t *pgdir, uint oldsz, uint newsz)
     pte = walkpgdir(pgdir, (char*)a, 0);
     if(!pte)
       a += (NPTENTRIES - 1) * PGSIZE;
-    else if((*pte & PTE_P) != 0){
+    else if((*pte & PTE_P) != 0){ // page is present
       pa = PTE_ADDR(*pte);
       if(pa == 0)
         panic("kfree");
       char *v = p2v(pa);
       kfree(v);
+      *pte = 0;
+      proc->numPhysPages--;
+      cprintf("%d. emptied page %d\n",proc->pid,proc->numPhysPages);
+    }
+    else if((*pte & PTE_PG) != 0){ // page isn`t present and in secondary storage
+      int i;
+      for(i=0;i<MAX_PSYC_PAGES;i++){
+        if((char*)a == proc->storedPages[i].va)
+          break;
+      }
+
+      if(i==MAX_PSYC_PAGES)
+        panic("deallocuvm - page not found");
+
+
+      proc->storedPages[i].inUse = 0;
+      proc->numStoredPages--;
       *pte = 0;
     }
   }
@@ -375,6 +443,41 @@ copyout(pde_t *pgdir, uint va, void *p, uint len)
     va = va0 + PGSIZE;
   }
   return 0;
+}
+
+void swapPages(uint va) {
+  
+  //TODO delet   cprintf("resched swapPages!\n");
+  if (strncmp(proc->name, "init",strlen(proc->name)) == 0 || strncmp(proc->name, "sh",strlen(proc->name)) == 0) {
+    //proc->pagesinmem++;
+    return;
+  }
+
+  char buf[PGSIZE];
+  pte_t *pte_to, *pte_from;
+  int i = 0;
+  for(i=0;i < MAX_PSYC_PAGES;i++){
+    if(proc->storedPages[i].va == (char*)PTE_ADDR(va))
+      break;
+  }
+
+  if(i==MAX_PSYC_PAGES)
+    panic("attack");
+
+  pte_to = walkpgdir(proc->pgdir, proc->storedPages[i].va, 0);
+  
+  pte_from = choosePTESwap();
+  cprintf("reading from swap\n");
+  readFromSwapFile(proc, buf, i*PGSIZE, PGSIZE);
+  cprintf("finished reading from swap\n");
+  writeToSwapFile(proc, (char*)P2V_WO(PTE_ADDR(*pte_from)), i*PGSIZE, PGSIZE);  
+  memmove((void*)PTE_ADDR(*pte_to), (void*)buf, PGSIZE);
+  *pte_from |= PTE_PG;
+  *pte_from &= ~PTE_P;
+  *pte_to |= PTE_P;
+  *pte_to &= ~PTE_PG;
+
+  lcr3(v2p(proc->pgdir));
 }
 
 //PAGEBREAK!

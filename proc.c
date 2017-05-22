@@ -70,6 +70,11 @@ found:
   memset(p->context, 0, sizeof *p->context);
   p->context->eip = (uint)forkret;
 
+  //init swapfile
+  // cprintf("pid: %d\n",p->pid);
+  // if(p->pid > 2) //do not init swapFile for shell and init proc
+  // 	p->swapFile = (struct file*)createSwapFile(p);
+
   return p;
 }
 
@@ -78,9 +83,9 @@ found:
 void
 userinit(void)
 {
+  
   struct proc *p;
   extern char _binary_initcode_start[], _binary_initcode_size[];
-  
   p = allocproc();
   initproc = p;
   if((p->pgdir = setupkvm()) == 0)
@@ -145,6 +150,12 @@ fork(void)
   np->sz = proc->sz;
   np->parent = proc;
   *np->tf = *proc->tf;
+
+  // copy swapFile for np
+ 
+  np->numPhysPages = proc->numPhysPages;
+  np->numStoredPages = proc->numStoredPages;
+  
 
   // Clear %eax so that fork returns 0 in the child.
   np->tf->eax = 0;
