@@ -13,7 +13,7 @@ struct {
 } ptable;
 
 static struct proc *initproc;
-
+int initTotalPages = 0;
 int nextpid = 1;
 extern void forkret(void);
 extern void trapret(void);
@@ -69,6 +69,20 @@ found:
   p->context = (struct context*)sp;
   memset(p->context, 0, sizeof *p->context);
   p->context->eip = (uint)forkret;
+  #ifndef NONE
+  	if(p->pid >2)
+    	createSwapFile(p);
+  	p->last = 0;
+  	for(int i =0;i<15;i++){
+  		p->physPages[i] = -1;
+  	}
+  	p->numPhysPages = 0;
+  	p->numStoredPages = 0;
+  	p->numPageFaults = 0;
+  	p->numPagedOut = 0;
+  #endif
+  //proc->stackTop = 0;
+ // init(&proc->tmpTop);
 
   //init swapfile
   // cprintf("pid: %d\n",p->pid);
@@ -81,9 +95,9 @@ found:
 //PAGEBREAK: 32
 // Set up first user process.
 void
-userinit(void)
+userinit(int totalPages)
 {
-  
+  initTotalPages = totalPages;
   struct proc *p;
   extern char _binary_initcode_start[], _binary_initcode_size[];
   p = allocproc();
@@ -91,6 +105,7 @@ userinit(void)
   if((p->pgdir = setupkvm()) == 0)
     panic("userinit: out of memory?");
   inituvm(p->pgdir, _binary_initcode_start, (int)_binary_initcode_size);
+  // cprintf("userinit pid: %d pgdir: %d\n",p->pid,p->pgdir);
   p->sz = PGSIZE;
   memset(p->tf, 0, sizeof(*p->tf));
   p->tf->cs = (SEG_UCODE << 3) | DPL_USER;
@@ -119,12 +134,26 @@ growproc(int n)
     if((sz = allocuvm(proc->pgdir, sz, sz + n)) == 0)
       return -1;
   } else if(n < 0){
-    if((sz = deallocuvm(proc->pgdir, sz, sz + n)) == 0)
+    if((sz = deallocuvm(proc->pgdir, sz, sz + n,proc,1)) == 0)
       return -1;
   }
   proc->sz = sz;
   switchuvm(proc);
   return 0;
+}
+
+void dupParentFile(struct proc* child) {
+  int i;
+  int read;
+  uint block = PGSIZE/4;
+  char buf[block];
+
+  i = 0;
+
+  while((read = readFromSwapFile(proc, buf, i*block, block)) > 0) {
+    writeToSwapFile(child, buf, i*block, read);
+    i++;
+  }
 }
 
 // Create a new process copying p as the parent.
@@ -141,7 +170,7 @@ fork(void)
     return -1;
 
   // Copy process state from p.
-  if((np->pgdir = copyuvm(proc->pgdir, proc->sz)) == 0){
+  if((np->pgdir = copyuvm(proc->pgdir, proc->sz,np)) == 0){
     kfree(np->kstack);
     np->kstack = 0;
     np->state = UNUSED;
@@ -150,12 +179,28 @@ fork(void)
   np->sz = proc->sz;
   np->parent = proc;
   *np->tf = *proc->tf;
-
+  // cprintf("fork father pid: %d pgdir:%d\n", proc->pid, proc->pgdir);
+  // cprintf("fork child pid: %d pgdir:%d\n", np->pid, np->pgdir);
+#ifndef NONE
   // copy swapFile for np
  
   np->numPhysPages = proc->numPhysPages;
   np->numStoredPages = proc->numStoredPages;
-  
+  np->last = proc->last;
+  for(int i=0;i<15;i++){
+  	np->storedPages[i].inUse = proc->storedPages[i].inUse;
+  	np->storedPages[i].va = proc->storedPages[i].va;
+  	np->physPages[i] = proc->physPages[i];
+  	np->accessCounts[i] = proc->accessCounts[i];
+  }
+  //memmove(np->storedPages,proc->storedPages,sizeof(proc->storedPages));
+  //memmove(np->physPages,proc->physPages,sizeof(proc->physPages));
+  if (proc->swapFile != 0) {
+ 	 dupParentFile(np);
+  }
+ #endif
+
+
 
   // Clear %eax so that fork returns 0 in the child.
   np->tf->eax = 0;
@@ -185,6 +230,9 @@ exit(void)
 {
   struct proc *p;
   int fd;
+  #ifdef TRUE
+  	procdump();
+  #endif
 
   if(proc == initproc)
     panic("init exiting");
@@ -201,6 +249,10 @@ exit(void)
   iput(proc->cwd);
   end_op();
   proc->cwd = 0;
+  if(proc->swapFile){
+    if (removeSwapFile(proc) != 0)
+     panic("exit: error deleting swap file");
+   }
 
   acquire(&ptable.lock);
 
@@ -215,6 +267,7 @@ exit(void)
         wakeup1(initproc);
     }
   }
+
 
   // Jump into the scheduler, never to return.
   proc->state = ZOMBIE;
@@ -243,7 +296,7 @@ wait(void)
         pid = p->pid;
         kfree(p->kstack);
         p->kstack = 0;
-        freevm(p->pgdir);
+        freevm(p->pgdir,p,1);
         p->state = UNUSED;
         p->pid = 0;
         p->parent = 0;
@@ -439,6 +492,10 @@ kill(int pid)
   return -1;
 }
 
+void printProcStats(struct proc *p){
+	cprintf("%d %d %d %d ", p->numPhysPages,p->numStoredPages,proc->numPageFaults,proc->numPagedOut);
+}
+
 //PAGEBREAK: 36
 // Print a process listing to console.  For debugging.
 // Runs when user types ^P on console.
@@ -458,7 +515,7 @@ procdump(void)
   struct proc *p;
   char *state;
   uint pc[10];
-  
+  int allocPages = 0;
   for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
     if(p->state == UNUSED)
       continue;
@@ -466,7 +523,13 @@ procdump(void)
       state = states[p->state];
     else
       state = "???";
-    cprintf("%d %s %s", p->pid, state, p->name);
+      allocPages += p->numPhysPages;
+      cprintf("%d %s %d %d %d %d %s", p->pid, state,p->numPhysPages,p->numStoredPages,p->numPageFaults,p->numPagedOut,p->name);
+  	 
+     // cprintf("%d %s ", p->pid, state);
+     // printProcStats(p);
+     // cprintf("%s",p->name);
+    
     if(p->state == SLEEPING){
       getcallerpcs((uint*)p->context->ebp+2, pc);
       for(i=0; i<10 && pc[i] != 0; i++)
@@ -474,4 +537,7 @@ procdump(void)
     }
     cprintf("\n");
   }
+  cprintf("%d \\ %d free pages in the system\n",initTotalPages - allocPages, initTotalPages);
 }
+
+// <field 1><field 2><allocated memory pages><paged out><page faults><total number of paged out><field set 3> 

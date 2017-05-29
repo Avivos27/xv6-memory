@@ -9,7 +9,7 @@
 #include "mmu.h"
 #include "spinlock.h"
 
-void freerange(void *vstart, void *vend);
+int freerange(void *vstart, void *vend);
 extern char end[]; // first address after kernel loaded from ELF file
 
 struct run {
@@ -27,6 +27,8 @@ struct {
 // the pages mapped by entrypgdir on free list.
 // 2. main() calls kinit2() with the rest of the physical pages
 // after installing a full page table that maps them on all cores.
+
+
 void
 kinit1(void *vstart, void *vend)
 {
@@ -35,20 +37,25 @@ kinit1(void *vstart, void *vend)
   freerange(vstart, vend);
 }
 
-void
+int
 kinit2(void *vstart, void *vend)
 {
-  freerange(vstart, vend);
+  int freePages = freerange(vstart, vend);
   kmem.use_lock = 1;
+  return freePages;
 }
 
-void
+int
 freerange(void *vstart, void *vend)
 {
   char *p;
+  int count=0;
   p = (char*)PGROUNDUP((uint)vstart);
-  for(; p + PGSIZE <= (char*)vend; p += PGSIZE)
+  for(; p + PGSIZE <= (char*)vend; p += PGSIZE){
     kfree(p);
+    count++;
+  }
+  return count;
 }
 
 //PAGEBREAK: 21

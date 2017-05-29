@@ -69,7 +69,7 @@ void            ioapicinit(void);
 char*           kalloc(void);
 void            kfree(char*);
 void            kinit1(void*, void*);
-void            kinit2(void*, void*);
+int            kinit2(void*, void*);
 
 // kbd.c
 void            kbdintr(void);
@@ -117,7 +117,7 @@ void            procdump(void);
 void            scheduler(void) __attribute__((noreturn));
 void            sched(void);
 void            sleep(void*, struct spinlock*);
-void            userinit(void);
+void            userinit(int);
 int             wait(void);
 void            wakeup(void*);
 void            yield(void);
@@ -137,6 +137,17 @@ void            initlock(struct spinlock*, char*);
 void            release(struct spinlock*);
 void            pushcli(void);
 void            popcli(void);
+
+// stack.c
+void push(uint *s,uint last, uint element);
+uint pop(uint *s,uint *top);
+int full(uint *top,const int size);
+int empty(uint *top);
+void initStack(uint *top);
+void display(uint *s,uint *top);
+int removeItem(uint *s,uint last, uint element);
+uint popLast(uint *s,uint last);
+uint popFirst(uint *s,uint last);
 
 // string.c
 int             memcmp(const void*, const void*, uint);
@@ -176,16 +187,16 @@ void            vmenable(void);
 pde_t*          setupkvm(void);
 char*           uva2ka(pde_t*, char*);
 int             allocuvm(pde_t*, uint, uint);
-int             deallocuvm(pde_t*, uint, uint);
-void            freevm(pde_t*);
+int             deallocuvm(pde_t*, uint, uint,struct proc* child,int delete);
+void            freevm(pde_t*,struct proc* child,int delete);
 void            inituvm(pde_t*, char*, uint);
 int             loaduvm(pde_t*, char*, struct inode*, uint, uint);
-pde_t*          copyuvm(pde_t*, uint);
+pde_t*      	copyuvm(pde_t *pgdir, uint sz,struct proc* child);
 void            switchuvm(struct proc*);
 void            switchkvm(void);
 int             copyout(pde_t*, uint, void*, uint);
 void            clearpteu(pde_t *pgdir, char *uva);
-void 			swapPages(uint va);
+int 			swapPages(uint va);
 
 // number of elements in fixed-size array
 #define NELEM(x) (sizeof(x)/sizeof((x)[0]))

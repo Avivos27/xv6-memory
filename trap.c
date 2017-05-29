@@ -36,8 +36,9 @@ idtinit(void)
 void
 trap(struct trapframe *tf)
 {
-  uint addr;
-  pde_t *va;
+  #ifndef NONE
+    uint addr;
+  #endif
   if(tf->trapno == T_SYSCALL){
     if(proc->killed)
       exit();
@@ -47,6 +48,20 @@ trap(struct trapframe *tf)
       exit();
     return;
   }
+  #ifdef LAP
+     if(cpu->id != 0 && proc!=0 && proc->pid>2){
+      addr = PGROUNDDOWN(rcr2());
+      // cprintf("======= TRAP: %d\n",addr);
+      int i=0;
+      for(;i<15;i++){
+        // cprintf("======= TRAP: %d. %d\n",i,proc->physPages[i]);
+        if(proc->physPages[i] == addr)
+          break;
+      } 
+      if(i<15)
+        proc->accessCounts[i]++;
+    }
+  #endif
 
   switch(tf->trapno){
   case T_IRQ0 + IRQ_TIMER:
@@ -56,6 +71,7 @@ trap(struct trapframe *tf)
       wakeup(&ticks);
       release(&tickslock);
     }
+
     lapiceoi();
     break;
   case T_IRQ0 + IRQ_IDE:
@@ -79,18 +95,16 @@ trap(struct trapframe *tf)
             cpu->id, tf->cs, tf->eip);
     lapiceoi();
     break;
-
+#ifndef NONE
   case T_PGFLT:
-
-    addr = rcr2();
-    va = &proc->pgdir[PDX(addr)];
-    if (((int)(*va) & PTE_P) != 0){  // if page table isn't present at page directory -> hard page fault
-      if (((uint*)PTE_ADDR(P2V(*va)))[PTX(addr)] & PTE_PG) { // if the page is in the process's swap file
-        swapPages(PTE_ADDR(addr)); 
-      }
-    }   
-    break;
-   
+        proc->numPageFaults++;
+        addr = PGROUNDDOWN(rcr2());
+        // cprintf("%d. PageFault with addr %d\n",proc->pid, addr);
+        // cprintf("%d. PageFault with rcr2 %d\n",proc->pid, rcr2());
+        swapPages(addr);
+        lapiceoi();
+        break;
+#endif
   //PAGEBREAK: 13
   default:
     if(proc == 0 || (tf->cs&3) == 0){

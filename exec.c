@@ -34,6 +34,24 @@ exec(char *path, char **argv)
 
   if((pgdir = setupkvm()) == 0)
     goto bad;
+#ifndef NONE
+  // reset all paging fields
+  proc->numPhysPages = 0;
+  proc->numStoredPages = 0;
+  proc->last = 0;
+  for(int i=0;i<MAX_PSYC_PAGES;i++){
+    proc->storedPages[i].inUse = 0;
+    proc->physPages[i] = -1;
+  }
+  if(proc->swapFile){
+    // char buf[MAX_PSYC_PAGES*PGSIZE];
+    // writeToSwapFile(proc,buf,0,MAX_PSYC_PAGES*PGSIZE);
+    removeSwapFile(proc);
+  }
+  createSwapFile(proc);
+#endif
+
+
 
   // Load program into memory.
   sz = 0;
@@ -89,16 +107,17 @@ exec(char *path, char **argv)
   // Commit to the user image.
   oldpgdir = proc->pgdir;
   proc->pgdir = pgdir;
+  // cprintf("exec pid: %d: oldpgdir: %d newpgdir: %d\n",proc->pid,oldpgdir,pgdir);
   proc->sz = sz;
   proc->tf->eip = elf.entry;  // main
   proc->tf->esp = sp;
   switchuvm(proc);
-  freevm(oldpgdir);
+  freevm(oldpgdir,proc,0);
   return 0;
 
  bad:
   if(pgdir)
-    freevm(pgdir);
+    freevm(pgdir,proc,1);
   if(ip){
     iunlockput(ip);
     end_op();

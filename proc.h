@@ -56,17 +56,11 @@ enum procstate { UNUSED, EMBRYO, SLEEPING, RUNNABLE, RUNNING, ZOMBIE };
 
 struct pgdesc{
   int inUse;
-  char* va;
+  uint va;
+  
 };
 
-struct lifoHead {
-  uint page;
-  struct lifoHead *next;
-};
 
-struct {
-  struct lifoHead *lifoHead;
-} lifo;
 // Per-process state
 struct proc {
   uint sz;                     // Size of process memory (bytes)
@@ -89,8 +83,12 @@ struct proc {
   // paging fields
   int numPhysPages;
   int numStoredPages;
-  struct pgdesc storedPages[MAX_PSYC_PAGES];
-  struct lifo lifoHead;
+  int numPageFaults;
+  int numPagedOut;
+  struct pgdesc storedPages[MAX_PSYC_PAGES]; //FILE SYSTEM
+  uint physPages[MAX_PSYC_PAGES]; //RAM
+  uint accessCounts[MAX_PSYC_PAGES];
+  uint last;
 };
 
 // Process memory is laid out contiguously, low addresses first:
